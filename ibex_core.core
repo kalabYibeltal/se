@@ -16,6 +16,9 @@ filesets:
       - lowrisc:ibex:ibex_icache
       - lowrisc:dv:dv_fcov_macros
     files:
+      - rtl/aes128_key_register.sv
+      - rtl/aes128_cipher.sv
+      - rtl/ibex_alu_secure.sv
       - rtl/ibex_alu.sv
       - rtl/ibex_branch_predict.sv
       - rtl/ibex_compressed_decoder.sv

@@ -53,6 +53,8 @@ module ibex_core import ibex_pkg::*; #(
   // marchid: encoding of base microarchitecture
   parameter logic [31:0]            CsrMimpId        = 32'b0
 ) (
+
+  
   // Clock and Reset
   input  logic                         clk_i,
   input  logic                         rst_ni,
@@ -174,6 +176,14 @@ module ibex_core import ibex_pkg::*; #(
   localparam bit          DataIndTiming     = SecureIbex;
   localparam bit          PCIncrCheck       = SecureIbex;
   localparam bit          ShadowCSR         = 1'b0;
+
+  // AES Key management
+  logic [127:0] aes_key;
+  logic         aes_key_valid;
+  logic         crypto_busy;
+  logic         crypto_error;
+
+
 
   // IF/ID signals
   logic        dummy_instr_id;
@@ -709,13 +719,65 @@ module ibex_core import ibex_pkg::*; #(
   // for RVFI only
   assign unused_illegal_insn_id = illegal_insn_id;
 
+  // ibex_ex_block #(
+  //   .RV32M          (RV32M),
+  //   .RV32B          (RV32B),
+  //   .BranchTargetALU(BranchTargetALU)
+  // ) ex_block_i (
+  //   .clk_i (clk_i),
+  //   .rst_ni(rst_ni),
+
+  //   // ALU signal from ID stage
+  //   .alu_operator_i         (alu_operator_ex),
+  //   .alu_operand_a_i        (alu_operand_a_ex),
+  //   .alu_operand_b_i        (alu_operand_b_ex),
+  //   .alu_instr_first_cycle_i(instr_first_cycle_id),
+
+  //   // Branch target ALU signal from ID stage
+  //   .bt_a_operand_i(bt_a_operand),
+  //   .bt_b_operand_i(bt_b_operand),
+
+  //   // Multipler/Divider signal from ID stage
+  //   .multdiv_operator_i   (multdiv_operator_ex),
+  //   .mult_en_i            (mult_en_ex),
+  //   .div_en_i             (div_en_ex),
+  //   .mult_sel_i           (mult_sel_ex),
+  //   .div_sel_i            (div_sel_ex),
+  //   .multdiv_signed_mode_i(multdiv_signed_mode_ex),
+  //   .multdiv_operand_a_i  (multdiv_operand_a_ex),
+  //   .multdiv_operand_b_i  (multdiv_operand_b_ex),
+  //   .multdiv_ready_id_i   (multdiv_ready_id),
+  //   .data_ind_timing_i    (data_ind_timing),
+
+  //   // Intermediate value register
+  //   .imd_val_we_o(imd_val_we_ex),
+  //   .imd_val_d_o (imd_val_d_ex),
+  //   .imd_val_q_i (imd_val_q_ex),
+
+  //   // Outputs
+  //   .alu_adder_result_ex_o(alu_adder_result_ex),  // to LSU
+  //   .result_ex_o          (result_ex),  // to ID
+
+  //   .branch_target_o  (branch_target_ex),  // to IF
+  //   .branch_decision_o(branch_decision),  // to ID
+
+  //   .ex_valid_o(ex_valid)
+  // );
+
   ibex_ex_block #(
     .RV32M          (RV32M),
     .RV32B          (RV32B),
-    .BranchTargetALU(BranchTargetALU)
+    .BranchTargetALU(BranchTargetALU),
+    .SecureALU      (1'b1)           // NEW PARAMETER
   ) ex_block_i (
     .clk_i (clk_i),
     .rst_ni(rst_ni),
+
+    // NEW: AES key interface
+    .aes_key_i            (aes_key),
+    .aes_key_valid_i      (aes_key_valid),
+    .crypto_busy_o        (crypto_busy),
+    .crypto_error_o       (crypto_error),
 
     // ALU signal from ID stage
     .alu_operator_i         (alu_operator_ex),
@@ -753,7 +815,6 @@ module ibex_core import ibex_pkg::*; #(
 
     .ex_valid_o(ex_valid)
   );
-
   /////////////////////
   // Load/store unit //
   /////////////////////
@@ -1159,6 +1220,28 @@ module ibex_core import ibex_pkg::*; #(
     .mul_wait_i                 (perf_mul_wait),
     .div_wait_i                 (perf_div_wait)
   );
+
+  /////////////////////////////
+  // AES Key Register        //
+  /////////////////////////////
+
+  if (1'b1) begin : gen_aes_key_register
+    // Initialize with a default key (should be programmed via CSR or debug interface in production)
+    aes128_key_register #(
+      .ResetAll(ResetAll)
+    ) aes_key_register_i (
+      .clk_i         (clk_i),
+      .rst_ni        (rst_ni),
+      .key_we_i      (1'b1),                      // Auto-load key on reset
+      .key_i         (128'hDEADBEEF_CAFEBABE_FEEDFACE_BADCAB1E),  // Default key
+      .key_o         (aes_key),
+      .key_valid_o   (aes_key_valid)
+    );
+  end else begin : gen_no_aes_key_register
+    assign aes_key = 128'h0;
+    assign aes_key_valid = 1'b0;
+  end
+
 
   // These assertions are in top-level as instr_valid_id required as the enable term
   `ASSERT(IbexCsrOpValid, instr_valid_id |-> csr_op inside {
@@ -1873,7 +1956,7 @@ module ibex_core import ibex_pkg::*; #(
   // On the first cycle of a new instruction see if a trap PC was set by the previous instruction,
   // otherwise maintain value.
   assign rvfi_intr_d = instr_first_cycle_id ? rvfi_set_trap_pc_q : rvfi_intr_q;
-
+  assign alert_major_internal_o = rf_ecc_err_comb | pc_mismatch_alert | csr_shadow_err | crypto_error;
   always_comb begin
     rvfi_set_trap_pc_d = rvfi_set_trap_pc_q;
 

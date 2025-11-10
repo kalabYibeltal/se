@@ -4,8 +4,8 @@ ibex:
     shared/rtl,
   ]
   files: [
-    rtl/aes128_cipher.sv,
     rtl/aes128_key_register.sv,
+    rtl/aes128_cipher_ot_wrapper.sv,
     rtl/ibex_alu_secure.sv,
     rtl/ibex_pkg.sv,
     rtl/ibex_alu.sv,

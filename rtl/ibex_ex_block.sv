@@ -4,17 +4,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Execution stage
+ * Execution stage with Secure ALU option
  *
  * Execution block: Hosts ALU and MUL/DIV unit
+ * Can use either standard ALU or secure (encrypted) ALU
  */
 module ibex_ex_block #(
   parameter ibex_pkg::rv32m_e RV32M           = ibex_pkg::RV32MFast,
   parameter ibex_pkg::rv32b_e RV32B           = ibex_pkg::RV32BNone,
-  parameter bit               BranchTargetALU = 0
+  parameter bit               BranchTargetALU = 0,
+  parameter bit               SecureALU       = 0  // NEW: Enable secure ALU
 ) (
   input  logic                  clk_i,
   input  logic                  rst_ni,
+
+  // NEW: AES key interface (only used if SecureALU == 1)
+  input  logic [127:0]          aes_key_i,
+  input  logic                  aes_key_valid_i,
+  output logic                  crypto_busy_o,
+  output logic                  crypto_error_o,
 
   // ALU
   input  ibex_pkg::alu_op_e     alu_operator_i,
@@ -113,25 +121,64 @@ module ibex_ex_block #(
   // ALU //
   /////////
 
-  ibex_alu #(
-    .RV32B(RV32B)
-  ) alu_i (
-    .operator_i         (alu_operator_i),
-    .operand_a_i        (alu_operand_a_i),
-    .operand_b_i        (alu_operand_b_i),
-    .instr_first_cycle_i(alu_instr_first_cycle_i),
-    .imd_val_q_i        (alu_imd_val_q),
-    .imd_val_we_o       (alu_imd_val_we),
-    .imd_val_d_o        (alu_imd_val_d),
-    .multdiv_operand_a_i(multdiv_alu_operand_a),
-    .multdiv_operand_b_i(multdiv_alu_operand_b),
-    .multdiv_sel_i      (multdiv_sel),
-    .adder_result_o     (alu_adder_result_ex_o),
-    .adder_result_ext_o (alu_adder_result_ext),
-    .result_o           (alu_result),
-    .comparison_result_o(alu_cmp_result),
-    .is_equal_result_o  (alu_is_equal_result)
-  );
+  if (SecureALU) begin : gen_secure_alu
+    // Use secure ALU with encryption/decryption
+    ibex_alu_secure #(
+      .RV32B(RV32B),
+      .EnableCrypto(1'b1)
+    ) alu_i (
+      .clk_i               (clk_i),
+      .rst_ni              (rst_ni),
+      .aes_key_i           (aes_key_i),
+      .aes_key_valid_i     (aes_key_valid_i),
+      .crypto_busy_o       (crypto_busy_o),
+      .crypto_error_o      (crypto_error_o),
+      .operator_i          (alu_operator_i),
+      .operand_a_i         (alu_operand_a_i),
+      .operand_b_i         (alu_operand_b_i),
+      .instr_first_cycle_i (alu_instr_first_cycle_i),
+      .imd_val_q_i         (alu_imd_val_q),
+      .imd_val_we_o        (alu_imd_val_we),
+      .imd_val_d_o         (alu_imd_val_d),
+      .multdiv_operand_a_i (multdiv_alu_operand_a),
+      .multdiv_operand_b_i (multdiv_alu_operand_b),
+      .multdiv_sel_i       (multdiv_sel),
+      .adder_result_o      (alu_adder_result_ex_o),
+      .adder_result_ext_o  (alu_adder_result_ext),
+      .result_o            (alu_result),
+      .comparison_result_o (alu_cmp_result),
+      .is_equal_result_o   (alu_is_equal_result)
+    );
+  end else begin : gen_standard_alu
+    // Use standard ALU
+    logic unused_aes_key_valid;
+    logic [127:0] unused_aes_key;
+    
+    assign unused_aes_key_valid = aes_key_valid_i;
+    assign unused_aes_key = aes_key_i;
+    assign crypto_busy_o = 1'b0;
+    assign crypto_error_o = 1'b0;
+    
+    ibex_alu #(
+      .RV32B(RV32B)
+    ) alu_i (
+      .operator_i          (alu_operator_i),
+      .operand_a_i         (alu_operand_a_i),
+      .operand_b_i         (alu_operand_b_i),
+      .instr_first_cycle_i (alu_instr_first_cycle_i),
+      .imd_val_q_i         (alu_imd_val_q),
+      .imd_val_we_o        (alu_imd_val_we),
+      .imd_val_d_o         (alu_imd_val_d),
+      .multdiv_operand_a_i (multdiv_alu_operand_a),
+      .multdiv_operand_b_i (multdiv_alu_operand_b),
+      .multdiv_sel_i       (multdiv_sel),
+      .adder_result_o      (alu_adder_result_ex_o),
+      .adder_result_ext_o  (alu_adder_result_ext),
+      .result_o            (alu_result),
+      .comparison_result_o (alu_cmp_result),
+      .is_equal_result_o   (alu_is_equal_result)
+    );
+  end
 
   ////////////////
   // Multiplier //
